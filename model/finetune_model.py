@@ -7,9 +7,9 @@ from model.base import Base
 from model.head import Head
 
 class Fmodel(nn.Module):
-    def __init__(self,base_model_type,feature_type, head):
+    def __init__(self,base_model_type,feature_type, head, num_level):
         super(Fmodel,self).__init__()
-        self.bmodel = Base(base_model_type)
+        self.bmodel = Base(base_model_type,num_level)
         self.head = head
         self.feature_type = feature_type
         self.bmodel.unfreeze()

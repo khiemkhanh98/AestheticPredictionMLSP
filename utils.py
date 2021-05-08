@@ -21,7 +21,10 @@ def metrics(x,y):
     return plcc, srcc, acc
 
 def makedirs(root,base_model_type,num_level,feature_type,head_type,resize,augment,hard_dp):
-    folder = os.path.join(root,base_model_type+'_'+str(num_level),feature_type,head_type)
+    if base_model_type == 'inceptionv3':
+        folder = os.path.join(root,base_model_type,str(num_level),feature_type,head_type)
+    else:
+        folder = os.path.join(root,base_model_type,feature_type,head_type)
     config = ''
 
     if resize:
@@ -67,16 +70,19 @@ def extract_features(imgloader, device, bmodel, feature_type, h5_file,batch_size
     h5_file.close()
 
 
-def get_model_from_ckpt(folder,model_type,metric):
+def get_model_from_ckpt(folder,model, model_type,metric, optimizer = None):
     checkpoints = glob.glob(os.path.join(folder,f'{model_type}*.pth'))
     metrics_list = np.array([float(re.findall(f"{model_type}.*?{metric}(.*?)\_", checkpoint)[0]) for checkpoint in checkpoints])
     ckpt = checkpoints[int(np.where(metrics_list == metrics_list.max())[0])]
-    model = torch.load(ckpt)
-    if metric == 'ep':
-        latest_ep = int(metrics_list.max())
-        return model,latest_ep
-    else:
-        return model
+    ckpt = torch.load(ckpt)
+    model.load_state_dict(ckpt['model'])
+    best_metric = int(metrics_list.max())
+    
+    if optimizer!=None:
+        optimizer.load_state_dict(ckpt['optimizer'])        
+    
+    return model,optimizer,best_metric
+
 def train(model,dataloader,device,loss_fn,optimizer,mini_iter,epoch):
     running_loss = 0
     model.train()
@@ -126,13 +132,15 @@ def eval(model,dataloader,loss_fn,device):
 def lr_scheduler(optimizer, epoch, lr, patience_cnt):
     if ((epoch%20)== 0) or patience_cnt:
         lr = lr/10
-
     optimizer.param_groups[0]['lr'] = lr
     return optimizer
 
 
-def save_model(model,ckpt_folder,epoch,plcc,srcc,acc,model_type):
-    torch.save(model,os.path.join(ckpt_folder,f'{model_type}_ckpt_ep{epoch}_plcc{plcc[0]:.2f}_srcc{srcc[0]:.2f}_acc{acc[0]:.2f}_.pth'))
+def save_model(model,optimizer,ckpt_folder,epoch,plcc,srcc,acc,model_type):
+    torch.save({
+        'model' : model.state_dict(),
+        'optimizer' : optimizer.state_dict(),
+    }, os.path.join(ckpt_folder,f'{model_type}_ckpt_ep{epoch}_plcc{plcc[0]:.2f}_srcc{srcc[0]:.2f}_acc{acc[0]:.2f}_.pth'))
 
 def logging(epoch,val_loss,acc,plcc,srcc):
     print(f'Epoch {epoch}: val loss-{val_loss} val acc-{acc}, srcc-{srcc}, plcc-{plcc}')
