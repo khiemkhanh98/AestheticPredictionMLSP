@@ -20,11 +20,11 @@ class Base(nn.Module):
     def attach_fea_in(self,classname,input,output):
         self.features.append(input[0])
 
-    def __init__(self,model,trainable = False):
+    def __init__(self,model,level,trainable = False):
         super(Base,self).__init__()
         self.features = []
         self.channel_size = []
-        os.environ['TORCH_HOME'] = '/gdrive/MyDrive/SRP/Code/Baseline/AestheticPredictionMLSP/pretrained_model'
+        os.environ['TORCH_HOME'] = './pretrained_model'
 
         if model == 'inceptionresnetv2':
             self.base_model = pretrainedmodels.__dict__[model](num_classes=1000, pretrained='imagenet')
@@ -42,7 +42,7 @@ class Base(nn.Module):
         
         if model == 'inceptionv3':
             self.base_model = models.inception_v3(pretrained=True,aux_logits=False)
-            used_blocks = ['Mixed_5b', 'Mixed_5c','Mixed_5d','Mixed_6a','Mixed_6b','Mixed_6c','Mixed_6d','Mixed_6e','Mixed_7a','Mixed_7b','Mixed_7c']
+            used_blocks = ['Mixed_5b', 'Mixed_5c','Mixed_5d','Mixed_6a','Mixed_6b','Mixed_6c','Mixed_6d','Mixed_6e','Mixed_7a','Mixed_7b','Mixed_7c'][-level:]
             unused_blocks = ['avgpool','fc']
 
             for block in used_blocks:

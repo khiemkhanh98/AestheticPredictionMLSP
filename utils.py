@@ -21,7 +21,10 @@ def metrics(x,y):
     return plcc, srcc, acc
 
 def makedirs(root,base_model_type,num_level,feature_type,head_type,resize,augment,hard_dp):
-    folder = os.path.join(root,base_model_type+'_'+str(num_level),feature_type,head_type)
+    if base_model_type == 'inceptionv3':
+        folder = os.path.join(root,base_model_type,str(num_level),feature_type,head_type)
+    else:
+        folder = os.path.join(root,base_model_type,feature_type,head_type)
     config = ''
 
     if resize:
