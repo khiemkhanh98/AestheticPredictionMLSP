@@ -46,7 +46,7 @@ class ImgDataset(data.Dataset):
         self.finetune = finetune
         self.path = path
         self.img_files = os.listdir(os.path.join(path,mode))  
-        self.label = pd.read_csv(path + mode + '_labels.txt', header=None, delimiter = r'\s+').set_index(0)
+        self.label = pd.read_csv(path + 'labels.csv')
 
         if not finetune:
             if augment:
