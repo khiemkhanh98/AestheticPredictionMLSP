@@ -30,7 +30,7 @@ def metrics(pred, target, n_aug):
         target_part = target[i*N: (i+1)*N]
 
         #accuracy is a percent (divided by 100) of right answers
-        acc_list.append(np.sum((pred_part >= 0.5)*1 == target_part)/len(pred_part))
+        acc_list.append(np.sum((pred_part >= 5)*1 == 5)/len(pred_part))
         #plcc is a pearson correlation coefficient
         plcc_list.append(pearsonr(pred_part, target_part)[0])
         #srcc is a spearman's rank correlation coefficient
