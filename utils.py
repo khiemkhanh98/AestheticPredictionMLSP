@@ -1,23 +1,41 @@
 import numpy as np
 import h5py
-import numpy as np
 import os
 import glob
 import re
 import torch
+from scipy.stats import pearsonr
+import pandas as pd
+from tqdm import tqdm
 
-def metrics(x,y):
-    """
-    this function evaluate plcc, srcc, acc.
-    make sure you read the source code to understand how it works
-    and remember that the result is average accross the augmentation. E.g. the output is like following A1,B2,C1,A2,B1,C2 (A,B,C are images; 1,2 are augmentation type), the MOS 
-    score for A = mean(A1+A2), B = ...., and only after that then the order of the MOS can be sorted, from which the plcc/srcc can be calculated. (That's what I understand from
-    the source code, so i think it's better you recheck it). 
- 
-    """
-    plcc = np.random.rand(1)
-    srcc = np.random.rand(1)
-    acc = np.random.rand(1)
+def metrics(pred, target, n_aug):
+    assert len(pred) == len(target), 'Number of predictions must be equal to the number of target data!'
+    assert len(pred) % n_aug == 0, \
+        'Output must consists of parts of equal sizes such as in each of them there are images with only one type augmentation!'
+
+    N = len(pred)//n_aug
+
+    plcc_list = []
+    srcc_list = []
+    acc_list = []
+    #For each augmentet part independently compute all metrics
+    for i in range(n_aug):
+        pred_part = pred[i*N: (i+1)*N]
+        target_part = target[i*N: (i+1)*N]
+
+        #accuracy is a percent (divided by 100) of right answers
+        acc_list.append(np.sum((pred_part >= 5)*1 == (target_part>=5))/len(pred_part))
+        #plcc is a pearson correlation coefficient
+        plcc_list.append(pearsonr(pred_part, target_part)[0])
+        #srcc is a spearman's rank correlation coefficient
+        xranks = pd.Series(pred_part).rank()
+        yranks = pd.Series(target_part).rank()
+        srcc_list.append(pearsonr(xranks, yranks)[0])
+
+    #After independent computing let's average all results to get one number for one metric
+    plcc = np.mean(plcc_list)
+    srcc = np.mean(srcc_list)
+    acc = np.mean(acc_list)
     return plcc, srcc, acc
 
 def makedirs(root,base_model_type,num_level,feature_type,head_type,resize,augment,hard_dp):
@@ -58,15 +76,15 @@ def build_h5(folder,h5_path,imgloader,channel_size,feature_type,head_type,num_le
     return h5_file
 
 def extract_features(imgloader, device, bmodel, feature_type, h5_file,batch_size,head_type,num_level):
-    for i,(img,label) in enumerate(imgloader):
+    for i,(img,label) in tqdm(enumerate(imgloader)):
         img= img.to(device)
         MLSP = bmodel.get_MLSP(img,feature_type, head_type)
-        h5_file['label'][i*batch_size:(i+1)*batch_size] = label.numpy().astype(np.float16)    
+        h5_file['label'][i*len(img):(i+1)*len(img)] = label.numpy().astype(np.float16)    
         if not head_type == 'multi_3FC':
-            h5_file['feature'][i*batch_size:(i+1)*batch_size] = MLSP.detach().cpu().numpy().astype(np.float16)
+            h5_file['feature'][i*len(img):(i+1)*len(img)] = MLSP.detach().cpu().numpy().astype(np.float16)
         else:
             for level in range(num_level):
-                h5_file[f'feature/{level}'][i*batch_size:(i+1)*batch_size] = MLSP[level].detach().cpu().numpy().astype(np.float16)
+                h5_file[f'feature/{level}'][i*len(img):(i+1)*len(img)] = MLSP[level].detach().cpu().numpy().astype(np.float16)
     h5_file.close()
 
 
@@ -107,7 +125,7 @@ def train(model,dataloader,device,loss_fn,optimizer,mini_iter,epoch):
         return model
 
 
-def eval(model,dataloader,loss_fn,device):
+def eval(model,dataloader,loss_fn,device,n_aug):
     with torch.no_grad():
         running_loss = 0
         MOS = []
@@ -126,7 +144,7 @@ def eval(model,dataloader,loss_fn,device):
             MOS.append(out.detach().cpu().numpy())
             labels.append(out.detach().cpu().numpy())
 
-    plcc, srcc, acc = metrics(MOS,labels)
+    plcc, srcc, acc = metrics(MOS,labels,n_aug)
     return plcc, srcc, acc , running_loss/(batch+1)
 
 def lr_scheduler(optimizer, epoch, lr, patience_cnt):

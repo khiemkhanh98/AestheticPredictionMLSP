@@ -8,6 +8,9 @@ from torchvision.transforms.functional import five_crop,crop,resize,hflip,normal
 import torchvision.transforms as T
 import pandas as pd
 from PIL import Image
+import zipfile
+import io
+import time
 
 #https://stackoverflow.com/questions/5040797/shuffling-numpy-array-along-a-given-axis
 def shuffle_along_axis(a, axis):
@@ -45,24 +48,33 @@ class ImgDataset(data.Dataset):
         self.augment = augment
         self.finetune = finetune
         self.path = path
-        self.img_files = os.listdir(os.path.join(path,mode))  
-        self.label = pd.read_csv(path + 'labels.csv')
-
-        if not finetune:
-            if augment:
+        
+        with open (os.path.join(path,mode+'_imgs.txt')) as f:
+            self.img_files = f.readlines()[:10]
+        
+        self.label = pd.read_csv(path + 'label.csv').set_index('img')
+        
+        if mode!='train' or augment:
+            if not finetune:
                 self.augment_list = np.array(list(range(8))*len(self.img_files)).reshape(-1,8)
                 self.augment_list = shuffle_along_axis(self.augment_list,axis=1).flatten('F')
                 self.img_files = self.img_files*8
-        else:
-            if mode != 'train':
+            else:
                 self.img_files = self.img_files*20
-
+        self.check = False
+        
     def __len__(self):
         return len(self.img_files)
 
     def __getitem__(self, index):
-        file_path = self.img_files[index]
-        img = T.ToTensor()(Image.open(os.path.join(self.path,self.mode,file_path)))
+        file_path = str.rstrip(self.img_files[index])
+        if not self.check:
+            self.zf = zipfile.ZipFile(self.path + 'images.zip', 'r')
+            self.check = True
+        img = Image.open(io.BytesIO(self.zf.read(os.path.join('images/',file_path))))
+        if len(img.size)==2:
+            img = img.convert('RGB')
+        img = T.ToTensor()(img)
         img = normalize(img,mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         label = self.label.loc[int(file_path[:-4])]
 
