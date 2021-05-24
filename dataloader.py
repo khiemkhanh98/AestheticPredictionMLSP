@@ -11,6 +11,10 @@ from PIL import Image
 import zipfile
 import io
 import time
+import matplotlib.pyplot as plt
+import random
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 #https://stackoverflow.com/questions/5040797/shuffling-numpy-array-along-a-given-axis
 def shuffle_along_axis(a, axis):
@@ -40,20 +44,23 @@ def random_crop_flip(img,ind = None):
     
     return img
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
 class ImgDataset(data.Dataset):
-    def __init__(self, path, mode, resize, augment , finetune ):
+    def __init__(self, path, mode, resize, augment , finetune):
         super(ImgDataset,self).__init__()
         self.mode = mode  ##'train'/'test'/'split'
         self.resize = resize
         self.augment = augment
         self.finetune = finetune
         self.path = path
-        
-        with open (os.path.join(path,mode+'_imgs.txt')) as f:
-            self.img_files = f.readlines()[:10]
-        
-        self.label = pd.read_csv(path + 'label.csv').set_index('img')
-        
+        df = pd.read_csv('./data/AVA_data_official_test.csv')
+        self.label = df.loc[df.set == mode][['image_name','MOS']].set_index('image_name')
+        self.img_files = self.label.index.values.tolist()
+
         if mode!='train' or augment:
             if not finetune:
                 self.augment_list = np.array(list(range(8))*len(self.img_files)).reshape(-1,8)
@@ -61,23 +68,19 @@ class ImgDataset(data.Dataset):
                 self.img_files = self.img_files*8
             else:
                 self.img_files = self.img_files*20
-        self.check = False
         
     def __len__(self):
         return len(self.img_files)
 
     def __getitem__(self, index):
-        file_path = str.rstrip(self.img_files[index])
-        if not self.check:
-            self.zf = zipfile.ZipFile(self.path + 'images.zip', 'r')
-            self.check = True
-        img = Image.open(io.BytesIO(self.zf.read(os.path.join('images/',file_path))))
+        file_path = self.img_files[index]        
+        img = Image.open('/content/images/' + file_path)
+
         if len(img.size)==2:
             img = img.convert('RGB')
         img = T.ToTensor()(img)
         img = normalize(img,mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        label = self.label.loc[int(file_path[:-4])]
-
+        label = self.label.loc[file_path]
         if self.resize:
             img = resize(img,(256,256))
         
@@ -95,60 +98,53 @@ class ImgDataset(data.Dataset):
 
     
 class FeatureDataset(data.Dataset):
-    def __init__(self, h5_path, head_type):
+    def __init__(self, h5_path):
         super().__init__()
         self.data = h5py.File(h5_path, 'r')
-        self.head_type = head_type
-        if not head_type == 'multi_3FC':
-             self.features = self.data['feature']
-             self.channel_size = self.features.shape[1] 
-        else:
-            self.num_level = len(self.data['feature'].keys())
-            self.features = [self.data[f'feature/{level}'] for level in range(self.num_level)]
-            self.channel_size = [feature.shape[1] for feature in self.features]
+
+        self.features = self.data['feature']
+        self.channel_size = self.features.shape[1] 
 
         self.labels = self.data['label']
         self.size = len(self.labels)
 
     def __len__(self):
-        return int(self.size/8)
+        return self.size
 
     def __getitem__(self, index):
-        # get data
-        if not self.head_type == 'multi_3FC':
-            x = self.features[index][()].astype(np.float32)
-            x = torch.from_numpy(x)
-        else:
-            x = []
-            for level in range(self.num_level):
-                x.append(torch.from_numpy(self.features[level][index][()].astype(np.float32)))
-
-        # get label
+        x = self.features[index][()].astype(np.float32)
+        x = torch.from_numpy(x)
+ 
         y = self.labels[index][()].astype(np.float32)
         y = torch.from_numpy(y)
-
         return (x, y)
 
 
-def get_dataloader(data_type, resize = False, augment= False, finetune = False, 
-            batch_size = 64, head_type = None,h5_paths = None,img_paths = './data/'):
-    splits = ['train', 'val', 'test']
+def get_dataloader(data_type, resize = False, augment= False, finetune = False, batch_size = 64, h5_paths = None,img_paths = './data/',extract=False):
     dataloaders = []
-
-    if data_type == 'img':
-        for split in splits:
-            imgdataset = ImgDataset(path = img_paths, mode = split, resize = resize, augment = augment, finetune = finetune)
-            if split == 'train':
-                shuffle = True
+    pin_memory = True
+    splits = ['train', 'val', 'test']
+    
+    for i in range(3):
+        if i == 0:
+            num_workers = 2
+            if not extract:
+                shuffle = False
             else:
                 shuffle = False
-            dataloaders.append(DataLoader(imgdataset, batch_size=batch_size,shuffle = shuffle, num_workers=2,pin_memory = True))
-        
-    else:
-        for h5_path in h5_paths:
-            feadataset = FeatureDataset(h5_path,head_type)
-            if 'train' in h5_path:
-                shuffle = True
-            dataloaders.append(DataLoader(feadataset, batch_size=batch_size,shuffle=shuffle, num_workers=2,pin_memory = True))
+        else:
+            num_workers = 1
+            shuffle = False
 
+        if i!=0 or extract:  
+            drop_last = False      
+        else:
+            drop_last = True
+
+        if data_type == 'img':        
+            dataset = ImgDataset(path = img_paths, mode = splits[i], resize = resize, augment = augment, finetune = finetune)
+        else:
+            dataset = FeatureDataset(h5_paths[i])
+
+        dataloaders.append(DataLoader(dataset, batch_size=batch_size,num_workers=num_workers,drop_last=drop_last,worker_init_fn=seed_worker))
     return dataloaders

@@ -13,7 +13,13 @@ class Base(nn.Module):
     def unfreeze(self):
         for param in self.base_model.parameters():
                 param.requires_grad = True
-
+    
+    def eval(self):
+        self.base_model.eval()
+    
+    def train(self):
+        self.base_model.train()
+    
     def attach_fea_out(self,classname,input,output):
         self.features.append(output)
 
@@ -62,7 +68,7 @@ class Base(nn.Module):
     def forward(self,img):
         self.base_model(img)
 
-    def get_MLSP(self,img,feature_type, head_type):
+    def get_MLSP(self,img,feature_type):
         self.base_model(img)
         if feature_type == 'narrow':
             MLSP = [F.adaptive_avg_pool2d(block, (1, 1)) for block in self.features]
@@ -73,9 +79,6 @@ class Base(nn.Module):
             MLSP = [F.interpolate(block,mode = 'area', size = 5) for block in self.features]
         
         self.features = []
-        if head_type == 'multi_3FC':
-            return MLSP
-
         MLSP = torch.cat(MLSP,dim = 1)
         return MLSP
     

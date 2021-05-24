@@ -9,102 +9,54 @@ import pandas as pd
 from tqdm import tqdm
 
 def metrics(pred, target, n_aug):
-    assert len(pred) == len(target), 'Number of predictions must be equal to the number of target data!'
-    assert len(pred) % n_aug == 0, \
-        'Output must consists of parts of equal sizes such as in each of them there are images with only one type augmentation!'
+    if n_aug!=1:
+        target = np.array(target).reshape(n_aug,-1).mean(axis=0)
+        pred = np.array(pred).reshape(n_aug,-1).mean(axis=0)
+    else:
+        target = np.array(target).reshape(-1)
+        pred = np.array(pred).reshape(-1)
 
-    N = len(pred)//n_aug
-
-    plcc_list = []
-    srcc_list = []
-    acc_list = []
-    #For each augmentet part independently compute all metrics
-    for i in range(n_aug):
-        pred_part = pred[i*N: (i+1)*N]
-        target_part = target[i*N: (i+1)*N]
-
-        #accuracy is a percent (divided by 100) of right answers
-        acc_list.append(np.sum((pred_part >= 5)*1 == (target_part>=5))/len(pred_part))
-        #plcc is a pearson correlation coefficient
-        plcc_list.append(pearsonr(pred_part, target_part)[0])
-        #srcc is a spearman's rank correlation coefficient
-        xranks = pd.Series(pred_part).rank()
-        yranks = pd.Series(target_part).rank()
-        srcc_list.append(pearsonr(xranks, yranks)[0])
-
-    #After independent computing let's average all results to get one number for one metric
-    plcc = np.mean(plcc_list)
-    srcc = np.mean(srcc_list)
-    acc = np.mean(acc_list)
+    acc = np.mean((pred >= 5) == (target>=5))
+    plcc = pearsonr(pred, target)[0]
+    xranks = pd.Series(pred).rank()
+    yranks = pd.Series(target).rank()
+    srcc = pearsonr(xranks, yranks)[0]
     return plcc, srcc, acc
 
-def makedirs(root,base_model_type,num_level,feature_type,head_type,resize,augment,hard_dp):
-    if base_model_type == 'inceptionv3':
-        folder = os.path.join(root,base_model_type,str(num_level),feature_type,head_type)
-    else:
-        folder = os.path.join(root,base_model_type,feature_type,head_type)
-    config = ''
 
-    if resize:
-        config+='resize'
-    if augment:
-        config+='+augment'
-    if hard_dp:
-        config+='+hard_dp'
-
-    path = os.path.join(folder,config)
-    if not os.path.exists(path):
-        os.makedirs(path)
-    
-    return path
-
-def build_h5(folder,h5_path,imgloader,channel_size,feature_type,head_type,num_level):
-    if os.path.isfile(h5_path):
-        h5_file = h5py.File(h5_path, 'a')
-    else:
-        h5_file = h5py.File(h5_path, 'w')
-        h5_file.create_dataset('label/', (len(imgloader.dataset),1), dtype = 'float16')
-        
-        if feature_type == 'narrow':      
-            if not head_type == 'multi_3FC':
-                h5_file.create_dataset('feature/', (len(imgloader.dataset),np.sum(channel_size)), dtype = 'float16')
-            else:
-                for level in range(num_level):
-                    h5_file.create_dataset(f'feature/{level}', (len(imgloader.dataset),channel_size[level]), dtype = 'float16')
+def get_model_from_ckpt(folder=None,model=None, model_type=None,metric=None, optimizer = None,ckpt=None):
+    if ckpt==None:
+        checkpoints = glob.glob(os.path.join(folder,f'{model_type}*.pth'))
+        metrics_list = np.array([float(re.findall(f"{model_type}.*?{metric}(.*?)\_", checkpoint)[0]) for checkpoint in checkpoints])
+        if metric == 'vloss':
+            ckpt = checkpoints[int(np.where(metrics_list == metrics_list.min())[0][-1])]
+            best_metric = int(metrics_list.min())
         else:
-            h5_file.create_dataset('feature/', (len(imgloader.dataset),np.sum(channel_size),5,5), dtype = 'float16')
-    return h5_file
+            ckpt = checkpoints[int(np.where(metrics_list == metrics_list.max())[0][-1])]
+            best_metric = int(metrics_list.max())
+    else:
+        best_metric = float(re.findall(f"{model_type}.*?{metric}(.*?)\_", ckpt)[0])
 
-def extract_features(imgloader, device, bmodel, feature_type, h5_file,batch_size,head_type,num_level):
-    for i,(img,label) in tqdm(enumerate(imgloader)):
-        img= img.to(device)
-        MLSP = bmodel.get_MLSP(img,feature_type, head_type)
-        h5_file['label'][i*len(img):(i+1)*len(img)] = label.numpy().astype(np.float16)    
-        if not head_type == 'multi_3FC':
-            h5_file['feature'][i*len(img):(i+1)*len(img)] = MLSP.detach().cpu().numpy().astype(np.float16)
-        else:
-            for level in range(num_level):
-                h5_file[f'feature/{level}'][i*len(img):(i+1)*len(img)] = MLSP[level].detach().cpu().numpy().astype(np.float16)
-    h5_file.close()
-
-
-def get_model_from_ckpt(folder,model, model_type,metric, optimizer = None):
-    checkpoints = glob.glob(os.path.join(folder,f'{model_type}*.pth'))
-    metrics_list = np.array([float(re.findall(f"{model_type}.*?{metric}(.*?)\_", checkpoint)[0]) for checkpoint in checkpoints])
-    ckpt = checkpoints[int(np.where(metrics_list == metrics_list.max())[0])]
     ckpt = torch.load(ckpt)
     model.load_state_dict(ckpt['model'])
-    best_metric = int(metrics_list.max())
-    
+    try:
+        best_train_loss = ckpt['best_train_loss']
+        patience_tloss = ckpt['patience_vloss']
+        patience_ep = ckpt['patience_ep']
+    except:
+        best_train_loss = 100
+        patience_tloss = 0
+        patience_ep = 0
+
     if optimizer!=None:
         optimizer.load_state_dict(ckpt['optimizer'])        
     
-    return model,optimizer,best_metric
+    return model,optimizer,best_metric,best_train_loss,patience_tloss,patience_ep
 
-def train(model,dataloader,device,loss_fn,optimizer,mini_iter,epoch):
-    running_loss = 0
+def train(model,dataloader,device,loss_fn,optimizer,mini_iter = None,epoch=200):
+    running_loss = []
     model.train()
-    for batch, (feature, label) in enumerate(dataloader):
+    for batch, (feature, label) in tqdm(enumerate(dataloader)):
         if isinstance(feature, list):
             feature = [f.to(device) for f in feature]
         else:
@@ -112,26 +64,29 @@ def train(model,dataloader,device,loss_fn,optimizer,mini_iter,epoch):
         label = label.to(device)
 
         out = model(feature)
-        loss = loss_fn(out,label)
+        loss = loss_fn(out,label.float())
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        running_loss.append(loss.detach().item())
 
-        running_loss += loss.detach().item()
-        if batch % mini_iter == 0:
-            print(f'Epoch {epoch} batch{batch} train_loss: {running_loss/mini_iter}')
-            running_loss = 0
+        if mini_iter!=None:
+            if batch % mini_iter == 0:
+                print(f'Epoch {epoch} train_mse: {np.mean(running_loss)}')
+                running_loss = []
+    if mini_iter==None:
+        print(f'Epoch {epoch} train_mse: {np.mean(running_loss)}')
 
-        return model
+    return model,np.mean(running_loss)
 
 
 def eval(model,dataloader,loss_fn,device,n_aug):
+    model.eval()
     with torch.no_grad():
-        running_loss = 0
+        running_loss = []
         MOS = []
         labels = []
-        model.eval()
-        for batch, (feature, label) in enumerate(dataloader):
+        for batch, (feature, label) in tqdm(enumerate(dataloader)):
             if isinstance(feature, list):
                 feature = [f.to(device) for f in feature]
             else:
@@ -140,25 +95,82 @@ def eval(model,dataloader,loss_fn,device,n_aug):
 
             out = model(feature)
             loss = loss_fn(out,label)
-            running_loss += loss.detach().item()
-            MOS.append(out.detach().cpu().numpy())
-            labels.append(out.detach().cpu().numpy())
+            running_loss.append(loss.detach().item())
+            MOS += out.detach().cpu().numpy().tolist()
+            labels += label.detach().cpu().numpy().tolist()
+        plcc, srcc, acc = metrics(MOS,labels,n_aug)
+        return plcc, srcc, acc , np.mean(running_loss)
 
-    plcc, srcc, acc = metrics(MOS,labels,n_aug)
-    return plcc, srcc, acc , running_loss/(batch+1)
-
-def lr_scheduler(optimizer, epoch, lr, patience_cnt):
-    if ((epoch%20)== 0) or patience_cnt:
-        lr = lr/10
-    optimizer.param_groups[0]['lr'] = lr
+def lr_rescheduler(optimizer):
+    print('lr: ', optimizer.param_groups[0]['lr'])
+    if optimizer.param_groups[0]['lr']/10 > 1e-6:
+        optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr']/10
+    else:
+        optimizer.param_groups[0]['lr'] = 1e-6
     return optimizer
 
 
-def save_model(model,optimizer,ckpt_folder,epoch,plcc,srcc,acc,model_type):
+def save_model(model,optimizer,ckpt_folder,epoch,plcc,srcc,acc,val_loss,best_train_loss,patience_ep,patience_tloss,model_type):
     torch.save({
         'model' : model.state_dict(),
         'optimizer' : optimizer.state_dict(),
-    }, os.path.join(ckpt_folder,f'{model_type}_ckpt_ep{epoch}_plcc{plcc[0]:.2f}_srcc{srcc[0]:.2f}_acc{acc[0]:.2f}_.pth'))
+        'best_train_loss' : best_train_loss,
+        'patience_ep' : patience_ep,
+        'patience_tloss' : patience_tloss,
+    }, os.path.join(ckpt_folder,f'{model_type}_ep{epoch}_vloss{val_loss:.2f}_plcc{plcc:.2f}_srcc{srcc:.2f}_acc{acc:.2f}_.pth'))
+    
 
 def logging(epoch,val_loss,acc,plcc,srcc):
-    print(f'Epoch {epoch}: val loss-{val_loss} val acc-{acc}, srcc-{srcc}, plcc-{plcc}')
+    print(f'Epoch {epoch}: val mse loss-{val_loss} val acc-{acc}, srcc-{srcc}, plcc-{plcc}')
+
+
+def makedirs(root='./experiment',base_model_type='inceptionv3',num_level=11,feature_type='narrow',head_type='single_1FC',resize=True,augment=False,hard_dp=False):
+    feature_path = os.path.join('feature',base_model_type,feature_type,'resize' if resize else 'no_resize','aug' if augment else 'no_aug')
+    if not os.path.exists(feature_path):
+        os.makedirs(feature_path)
+
+    if base_model_type == 'inceptionv3':
+        folder = os.path.join(root,base_model_type,str(num_level),feature_type,head_type)
+    else:
+        folder = os.path.join(root,base_model_type,feature_type,head_type)
+    
+    config = ''
+    if resize:
+        config+='resize'
+    if augment:
+        config+='+aug'
+    if hard_dp:
+        config+='+hard_dp'
+
+    ckpt_path = os.path.join(folder,config)
+    
+    if not os.path.exists(ckpt_path):
+        os.makedirs(ckpt_path)
+    return ckpt_path,feature_path
+
+def build_h5(h5_path,imgloader,channel_size,feature_type):
+    if os.path.isfile(h5_path):
+        h5_file = h5py.File(h5_path, 'a')
+    else:
+        h5_file = h5py.File(h5_path, 'w')
+        h5_file.create_dataset('label/', (len(imgloader.dataset),1), dtype = 'float16')
+
+        if feature_type == 'narrow':      
+            h5_file.create_dataset('feature/', (len(imgloader.dataset),np.sum(channel_size)), dtype = 'float16')
+        else:
+            h5_file.create_dataset('feature/', (len(imgloader.dataset),np.sum(channel_size),5,5), dtype = 'float16')
+
+    return h5_file
+
+def extract_features(imgloader, device, bmodel, feature_type, h5_file,batch_size):
+    with torch.no_grad():
+        for i,(img,label) in tqdm(enumerate(imgloader)):
+            img= img.to(device)
+            MLSP = bmodel.get_MLSP(img,feature_type)
+            h5_file['label'][i*len(img):(i+1)*len(img)] = label.numpy().astype(np.float16) 
+            if i <= int(len(imgloader.dataset)//batch_size-1):   
+                h5_file['feature'][i*len(img):(i+1)*len(img)] = MLSP.detach().cpu().numpy().astype(np.float16)
+            else:
+                h5_file['feature'][-len(img):] = MLSP.detach().cpu().numpy().astype(np.float16)
+
+    h5_file.close()
