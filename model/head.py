@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import numpy as np
 import torchvision
 
-
 class View(nn.Module):
     def __init__(self, shape):
         super(View,self).__init__()
@@ -13,14 +12,6 @@ class View(nn.Module):
 
     def forward(self, x):
         x  =x.view(*self.shape)
-        return x
-
-class View1(nn.Module):
-    def __init__(self):
-        super(View1,self).__init__()
-
-    def forward(self, x):
-        print(x.size())
         return x
 
 class head_block():
@@ -37,7 +28,6 @@ class head_block():
         modules = []
         modules.append(Linear(num_channel,x))
         modules.append(nn.ReLU())
-        modules.append(View([-1,int(x),1]))
         modules.append(BatchNorm1d(int(x)))
         
         modules.append(Dropout(p=dropout[0]))
@@ -45,7 +35,6 @@ class head_block():
         modules.append(Linear(x,int(x/2)))
         
         modules.append(nn.ReLU())
-        modules.append(View([-1,int(x/2),1]))
         modules.append(BatchNorm1d(int(x/2)))
         modules.append(Dropout(p=dropout[1]))
 
@@ -62,13 +51,13 @@ class head_block():
 
     def single_3FC(self,num_channel,dropout, x=2048):
         num_channel = int(np.sum(num_channel))
-        return Sequential(self.block_3FC(num_channel,x,dropout),Linear(int(x/8),1))
+        return Sequential(self.block_3FC(num_channel,dropout,x),Linear(int(x/8),1))
 
-    def multi_3FC(self,num_channels,dropout,x=2048):
+    def multi_3FC(self,num_channels,dropout):
         blocks = []
         for num_channel in num_channels:
-            blocks.append(self.block_3FC(num_channel,dropout,x))
-        blocks.append(Linear(int(len(num_channels)*(x/8)),1))
+            blocks.append(self.block_3FC(num_channel,dropout,num_channel))
+        blocks.append(Linear(int((np.sum(num_channels)/8)),1))
         return ModuleList(blocks)
 
     def pool_3FC(self,num_channel, dropout):
@@ -86,9 +75,10 @@ class Head(nn.Module):
         super(Head, self).__init__()
         self.head = getattr(head_block(),head_type)(num_channel, dropout)
         self.head_type = head_type
-
+        self.num_ch = num_channel
     def forward(self,features):
         if self.head_type == 'multi_3FC':
+            features = torch.split(features,self.num_ch,dim=1)
             x = torch.cat([block(feature) for feature,block in zip(features,self.head[:-1])],dim=1)
             x = self.head[-1](x)
         elif self.head_type == 'pool_3FC':

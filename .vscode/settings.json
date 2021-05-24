@@ -1,4 +1,4 @@
 {
-    "python.pythonPath": "c:\\Users\\User\\Anaconda3\\envs\\khiem\\python.exe",
-    "jupyter.jupyterServerType": "remote"
+    "python.pythonPath": "/usr/bin/python3",
+    "jupyter.jupyterServerType": "local"
 }
