@@ -71,11 +71,21 @@ class head_block():
         return ModuleList(blocks)
 
 class Head(nn.Module):
-    def __init__(self,head_type,num_channel,dropout):
+    def __init__(self,head_type,num_channel,hard_dp,num_level = 11):
         super(Head, self).__init__()
+        
+        if hard_dp:
+            dropout = [0.5,0.5,0.75]
+        else:
+            dropout = [0.25,0.25,0.5]
+
+        if ('single' in head_type) and (num_level!=11):
+            num_chanel = num_channel[-num_level:]
+
         self.head = getattr(head_block(),head_type)(num_channel, dropout)
         self.head_type = head_type
         self.num_ch = num_channel
+
     def forward(self,features):
         if self.head_type == 'multi_3FC':
             features = torch.split(features,self.num_ch,dim=1)
@@ -88,6 +98,7 @@ class Head(nn.Module):
             x = self.head[-2](x)
             x = self.head[-1](x)
         else:
+            features = features[-np.sum(self.num_ch):]
             x = self.head(features)
         return x
 

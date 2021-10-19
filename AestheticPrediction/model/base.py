@@ -26,7 +26,7 @@ class Base(nn.Module):
     def attach_fea_in(self,classname,input,output):
         self.features.append(input[0])
 
-    def __init__(self,model,level,trainable = False):
+    def __init__(self,model,trainable = False):
         super(Base,self).__init__()
         self.features = []
         self.channel_size = []
@@ -41,14 +41,17 @@ class Base(nn.Module):
                 if 'mixed' in block:
                     getattr(self.base_model,block).register_forward_hook(self.attach_fea_out)
                 else:           
-                    sub_blocks = [submod for submod in getattr(base_model,block).children()]
+                    sub_blocks = [submod for submod in getattr(self.base_model,block).children()]
                     for sub_block in sub_blocks:
-                        sub_block.conv2d.register_forward_hook(attach_fea_in)
-            self.base_model.block8.conv2d.register_forward_hook(attach_fea_in)
+                        sub_block.conv2d.register_forward_hook(self.attach_fea_in)
+            self.base_model.block8.conv2d.register_forward_hook(self.attach_fea_in)
+            
+            for block in unused_blocks:
+                setattr(self.base_model,block,nn.Identity())
         
         if model == 'inceptionv3':
             self.base_model = models.inception_v3(pretrained=True,aux_logits=False)
-            used_blocks = ['Mixed_5b', 'Mixed_5c','Mixed_5d','Mixed_6a','Mixed_6b','Mixed_6c','Mixed_6d','Mixed_6e','Mixed_7a','Mixed_7b','Mixed_7c'][-level:]
+            used_blocks = ['Mixed_5b', 'Mixed_5c','Mixed_5d','Mixed_6a','Mixed_6b','Mixed_6c','Mixed_6d','Mixed_6e','Mixed_7a','Mixed_7b','Mixed_7c']
             unused_blocks = ['avgpool','fc']
 
             for block in used_blocks:
@@ -60,7 +63,7 @@ class Base(nn.Module):
         if not trainable:
             self.freeze()
 
-        fake_img = torch.rand(1,3,256,256) ## pass fake img to the model to get the channel size
+        fake_img = torch.rand(1,3,299,299) ## pass fake img to the model to get the channel size
         self.base_model(fake_img)
         self.channel_size = [block.size()[1] for block in self.features]
         self.features = []

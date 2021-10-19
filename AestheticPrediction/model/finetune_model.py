@@ -18,18 +18,18 @@ class Fmodel(nn.Module):
     
     def forward(self,img):
         #self.bmodel(img)
-        x = self.bmodel.get_MLSP(img,self.feature_type,self.head.head_type)
+        x = self.bmodel.get_MLSP(img,self.feature_type)
         x = self.head(x)
         return x
 
     def unfreeze(self):
-        self.bmodel.model.unfreeze()
+        self.bmodel.unfreeze()
 
     def eval(self):
         self.bmodel.eval()
         self.head.eval()
     
     def train(self):
-        #self.bmodel.train()
+        self.bmodel.train()
         self.head.train()
         
